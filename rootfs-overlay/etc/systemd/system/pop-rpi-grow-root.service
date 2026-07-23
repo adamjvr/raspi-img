@@ -1,0 +1,11 @@
+[Unit]
+Description=Expand the Pop!_OS Raspberry Pi root filesystem
+After=local-fs.target
+ConditionPathExists=!/var/lib/pop-rpi/root-grown
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pop-rpi-grow-root
+
+[Install]
+WantedBy=multi-user.target

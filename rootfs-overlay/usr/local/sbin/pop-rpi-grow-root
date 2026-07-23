@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Expand partition 2 and its ext4 filesystem to occupy the flashed device.
+
+set -Eeuo pipefail
+
+MARKER=/var/lib/pop-rpi/root-grown
+[[ -e "${MARKER}" ]] && exit 0
+
+ROOT_DEVICE="$(findmnt --noheadings --output SOURCE /)"
+if [[ "${ROOT_DEVICE}" != /dev/* ]]; then
+    echo "Unsupported root source: ${ROOT_DEVICE}" >&2
+    exit 1
+fi
+
+PARENT_NAME="$(lsblk --noheadings --output PKNAME "${ROOT_DEVICE}" | xargs)"
+PARTITION_NUMBER="$(lsblk --noheadings --output PARTN "${ROOT_DEVICE}" | xargs)"
+
+if [[ -z "${PARENT_NAME}" || -z "${PARTITION_NUMBER}" ]]; then
+    echo "Could not identify the root disk and partition number" >&2
+    exit 1
+fi
+
+PARENT_DEVICE="/dev/${PARENT_NAME}"
+growpart "${PARENT_DEVICE}" "${PARTITION_NUMBER}" || true
+partprobe "${PARENT_DEVICE}" || true
+udevadm settle || true
+resize2fs "${ROOT_DEVICE}"
+
+mkdir -p "$(dirname "${MARKER}")"
+touch "${MARKER}"

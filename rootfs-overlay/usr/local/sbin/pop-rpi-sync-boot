@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Synchronize the kernel, initramfs, DTBs, overlays, and Pi firmware to the FAT
+# partition read by the Raspberry Pi boot EEPROM.
+
+set -Eeuo pipefail
+
+BOOT_DIR=/boot/firmware
+
+if ! mountpoint --quiet "${BOOT_DIR}"; then
+    echo "${BOOT_DIR} is not mounted; skipping boot synchronization" >&2
+    exit 0
+fi
+
+KERNEL="$(readlink -f /boot/vmlinuz)"
+INITRD="$(readlink -f /boot/initrd.img)"
+
+test -f "${KERNEL}"
+test -f "${INITRD}"
+
+install -m 0644 "${KERNEL}" "${BOOT_DIR}/vmlinuz"
+install -m 0644 "${INITRD}" "${BOOT_DIR}/initrd.img"
+
+FIRMWARE_TREE="$({
+    find /lib/firmware \
+        -mindepth 1 -maxdepth 1 -type d -name '*-raspi' -print
+} | sort -V | tail -n 1)"
+
+if [[ -z "${FIRMWARE_TREE}" ]]; then
+    echo "Could not locate a *-raspi firmware tree" >&2
+    exit 1
+fi
+
+DTB_DIR="${FIRMWARE_TREE}/device-tree/broadcom"
+OVERLAY_DIR="${FIRMWARE_TREE}/device-tree/overlays"
+
+test -d "${DTB_DIR}"
+test -d "${OVERLAY_DIR}"
+
+find "${DTB_DIR}" -maxdepth 1 -type f -name '*.dtb' \
+    -exec install -m 0644 '{}' "${BOOT_DIR}/" ';'
+
+rm -rf "${BOOT_DIR}/overlays"
+cp -a "${OVERLAY_DIR}" "${BOOT_DIR}/overlays"
+
+if [[ -d /usr/lib/linux-firmware-raspi ]]; then
+    cp -af /usr/lib/linux-firmware-raspi/. "${BOOT_DIR}/"
+fi
+
+test -f "${BOOT_DIR}/bcm2712-rpi-5-b.dtb"
+sync
