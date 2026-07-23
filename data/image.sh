@@ -1,88 +1,72 @@
 #!/usr/bin/env bash
+# Build a partitioned, directly flashable Raspberry Pi disk image.
+#
+# Arguments:
+#   1. output image path
+#   2. temporary mount directory
+#   3. completed debootstrap root filesystem
 
-set -eE
+set -Eeuo pipefail
 
-if [ -z "$1" -o -z "$2" -o ! -d "$3" ]
-then
-    echo "$0 [image] [mount] [debootstrap]" >&2
-    exit 1
+if [[ $# -ne 3 || ! -d "$3" ]]; then
+    echo "Usage: $0 IMAGE MOUNT_DIR DEBOOTSTRAP_ROOT" >&2
+    exit 2
 fi
-IMAGE="$(realpath "$1")"
-MOUNT="$(realpath "$2")"
-DEBOOTSTRAP="$(realpath "$3")"
 
-function cleanup {
-    set +x
+IMAGE="$(realpath -m "$1")"
+MOUNT_DIR="$(realpath -m "$2")"
+DEBOOTSTRAP_ROOT="$(realpath "$3")"
 
-    # Unmount all mounted partitions
-    if [ -n "$(mount | grep "${MOUNT}")" ]
-    then
-        umount "${MOUNT}/boot/firmware"
-        umount "${MOUNT}"
+IMAGE_SIZE="${IMAGE_SIZE:-16G}"
+BOOT_START_MIB="${BOOT_START_MIB:-1}"
+BOOT_END_MIB="${BOOT_END_MIB:-1025}"
+PROFILE="${PROFILE:-development}"
+DEV_CONFIG="${DEV_CONFIG:-}"
+LOOP_DEVICE=""
+
+cleanup() {
+    local status=$?
+    set +e
+
+    if mountpoint --quiet "${MOUNT_DIR}/boot/firmware"; then
+        umount "${MOUNT_DIR}/boot/firmware"
     fi
 
-    # Ensure there are no mounted partitions
-    if [ -n "$(mount | grep "${MOUNT}")" ]
-    then
-        echo "${MOUNT} still mounted" >&2
-        exit 1
+    if mountpoint --quiet "${MOUNT_DIR}"; then
+        umount "${MOUNT_DIR}"
     fi
 
-    # Detach all loopback devices
-    losetup --associated "${IMAGE}" | cut -d ':' -f1 | while read LODEV
-    do
-        losetup --detach "${LODEV}"
-    done
+    if [[ -n "${LOOP_DEVICE}" ]]; then
+        losetup --detach "${LOOP_DEVICE}" 2>/dev/null || true
+    fi
 
-    # Ensure there are no attached loopback devices
-    losetup --associated "${IMAGE}" | cut -d ':' -f1 | while read LODEV
-    do
-        echo "${IMAGE} still has loopback device ${LODEV}" >&2
-        exit 1
-    done
+    exit "${status}"
 }
+trap cleanup EXIT INT TERM
 
-# Run cleanup on error
-trap cleanup ERR
+rm -rf --one-file-system "${MOUNT_DIR}"
+rm -f "${IMAGE}"
+mkdir -p "$(dirname "${IMAGE}")" "${MOUNT_DIR}"
 
-# Run cleanup prior to the script
-cleanup
+# truncate creates a sparse host-side image, avoiding needless allocation of
+# every unused byte before compression.
+truncate --size "${IMAGE_SIZE}" "${IMAGE}"
 
-# Remove old mount
-rm --recursive --force --one-file-system "${MOUNT}"
+parted --script "${IMAGE}" mktable msdos
+parted --script "${IMAGE}" \
+    mkpart primary fat32 "${BOOT_START_MIB}MiB" "${BOOT_END_MIB}MiB"
+parted --script "${IMAGE}" set 1 boot on
+parted --script "${IMAGE}" \
+    mkpart primary ext4 "${BOOT_END_MIB}MiB" 100%
 
-# Remove old image
-rm --recursive --force --verbose "${IMAGE}"
+LOOP_DEVICE="$(losetup --find --show --partscan "${IMAGE}")"
+udevadm settle
 
-set -x
+mkfs.vfat -F 32 -n system-boot "${LOOP_DEVICE}p1"
+mkfs.ext4 -F -L writable "${LOOP_DEVICE}p2"
 
-# Allocate image (8GiB)
-fallocate --verbose --length 8GiB "${IMAGE}"
+mount "${LOOP_DEVICE}p2" "${MOUNT_DIR}"
 
-# Partition image
-parted "${IMAGE}" mktable msdos
-parted "${IMAGE}" mkpart primary fat32 1MiB 256MiB
-parted "${IMAGE}" set 1 boot on
-parted "${IMAGE}" mkpart primary ext4 256MiB 100%
-
-# Loopback mount image file
-LODEV="$(losetup --find --show --partscan "${IMAGE}")"
-
-# Format boot partition
-#TODO: other parameters?
-mkfs.vfat -n system-boot "${LODEV}p1"
-
-# Format root partition
-#TODO: other parameters?
-mkfs.ext4 -L writable "${LODEV}p2"
-
-# Create mount directory
-mkdir -pv "${MOUNT}"
-
-# Mount root partition
-mount "${LODEV}p2" "${MOUNT}"
-
-# Copy debootstrap
 rsync \
     --archive \
     --acls \
@@ -91,39 +75,43 @@ rsync \
     --sparse \
     --whole-file \
     --xattrs \
-    --stats \
-    "${DEBOOTSTRAP}/" "${MOUNT}/"
+    "${DEBOOTSTRAP_ROOT}/" "${MOUNT_DIR}/"
 
-# Copy modified configuration files
-rsync \
-    --recursive \
-    --verbose \
-    "data/etc/" \
-    "${MOUNT}/etc/"
+rsync --archive "data/etc/" "${MOUNT_DIR}/etc/"
 
-# Mount boot partition
-mkdir -p "${MOUNT}/boot/firmware"
-mount "${LODEV}p1" "${MOUNT}/boot/firmware"
+mkdir -p "${MOUNT_DIR}/boot/firmware"
+mount "${LOOP_DEVICE}p1" "${MOUNT_DIR}/boot/firmware"
+rsync --archive "data/boot/firmware/" "${MOUNT_DIR}/boot/firmware/"
 
-# Copy modified firmware files
-rsync \
-    --recursive \
-    --verbose \
-    "data/boot/firmware/" \
-    "${MOUNT}/boot/firmware/"
+if [[ -d rootfs-overlay ]]; then
+    rsync \
+        --archive \
+        --acls \
+        --hard-links \
+        --numeric-ids \
+        --xattrs \
+        "rootfs-overlay/" "${MOUNT_DIR}/"
+fi
 
-# Copy chroot script
-cp -v data/chroot.sh "${MOUNT}/chroot.sh"
+install -m 0755 data/chroot.sh "${MOUNT_DIR}/root/rpi-image-chroot.sh"
 
-# Run chroot script in container
+if [[ "${PROFILE}" == development ]]; then
+    if [[ -z "${DEV_CONFIG}" || ! -f "${DEV_CONFIG}" ]]; then
+        echo "Development profile requires DEV_CONFIG" >&2
+        exit 1
+    fi
+    install -m 0600 "${DEV_CONFIG}" \
+        "${MOUNT_DIR}/root/rpi-image-build.conf"
+fi
+
 systemd-nspawn \
-	--machine=pop-os \
-	--resolv-conf=off \
-	--directory="${MOUNT}" \
-    bash /chroot.sh
+    --quiet \
+    --register=no \
+    --machine=pop-rpi5-build \
+    --directory="${MOUNT_DIR}" \
+    --resolv-conf=copy-host \
+    --setenv="IMAGE_PROFILE=${PROFILE}" \
+    /bin/bash /root/rpi-image-chroot.sh
 
-# Remove chroot script
-rm -v "${MOUNT}/chroot.sh"
-
-# Run cleanup after the script
-cleanup
+rm -f "${MOUNT_DIR}/root/rpi-image-chroot.sh"
+sync
