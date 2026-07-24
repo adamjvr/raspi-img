@@ -40,10 +40,14 @@ find "${DTB_DIR}" -maxdepth 1 -type f -name '*.dtb' \
     -exec install -m 0644 '{}' "${BOOT_DIR}/" ';'
 
 rm -rf "${BOOT_DIR}/overlays"
-cp -a "${OVERLAY_DIR}" "${BOOT_DIR}/overlays"
+mkdir -p "${BOOT_DIR}/overlays"
+
+# Use ordinary recursive copies on VFAT. Do not use cp -a here because archive
+# mode attempts to preserve ownership and permissions that FAT cannot store.
+cp -r "${OVERLAY_DIR}/." "${BOOT_DIR}/overlays/"
 
 if [[ -d /usr/lib/linux-firmware-raspi ]]; then
-    cp -af /usr/lib/linux-firmware-raspi/. "${BOOT_DIR}/"
+    cp -rf /usr/lib/linux-firmware-raspi/. "${BOOT_DIR}/"
 fi
 
 test -f "${BOOT_DIR}/bcm2712-rpi-5-b.dtb"

@@ -81,7 +81,17 @@ rsync --archive "data/etc/" "${MOUNT_DIR}/etc/"
 
 mkdir -p "${MOUNT_DIR}/boot/firmware"
 mount "${LOOP_DEVICE}p1" "${MOUNT_DIR}/boot/firmware"
-rsync --archive "data/boot/firmware/" "${MOUNT_DIR}/boot/firmware/"
+# FAT does not support normal Unix ownership, group, permission, ACL, or
+# extended-attribute semantics. Preserve file contents and timestamps, but do
+# not ask rsync to apply metadata that VFAT cannot represent.
+rsync \
+    --archive \
+    --no-perms \
+    --no-owner \
+    --no-group \
+    --omit-dir-times \
+    --modify-window=1 \
+    "data/boot/firmware/" "${MOUNT_DIR}/boot/firmware/"
 
 if [[ -d rootfs-overlay ]]; then
     rsync \
