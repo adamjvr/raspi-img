@@ -1,41 +1,16 @@
-# Pop!_OS 24.04 Raspberry Pi 5 minimal modernization
+# Raspberry Pi 5 image documentation
 
-This directory is a drop-in overlay for `adamjvr/raspi-img`. It retains the
-System76 image-builder model while adding direct Pi 5 boot support, a larger
-boot partition, first-boot root expansion, kernel-update synchronization,
-image verification, and safer flashing.
+The detailed Raspberry Pi 5 image documentation now lives in [`docs/IMAGE.md`](docs/IMAGE.md).
 
-## Apply over the fork
+Start here:
 
-```bash
-cd ~/GitHub/raspi-img
-git switch -c rpi5-minimal
-unzip -o /path/to/raspi-img-rpi5-minimal-overlay.zip -d .
-git add -A
-git commit -m "Add Raspberry Pi 5 image bring-up"
-```
+- [Repository overview](README.md)
+- [Image guide](docs/IMAGE.md)
+- [Build instructions](docs/BUILDING.md)
+- [Flashing guide](docs/FLASHING.md)
+- [Hardware test plan](docs/TESTING.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
 
-## Build
+## Current status
 
-```bash
-make deps
-make configure
-make lint
-make release
-```
-
-## Flash
-
-```bash
-make flash DEVICE=/dev/sdX
-```
-
-The release artifact is written to:
-
-```text
-dist/pop-os_24.04_rpi5_arm64-dev0.img.xz
-```
-
-This is development code. Validate console boot, KMS, COSMIC, networking,
-root expansion, and kernel-update survival before describing the image as a
-release candidate.
+The image builds, passes host-side structural verification, compresses, and produces release artifacts. Physical Raspberry Pi 5 boot and subsystem validation are still required before release-candidate status.
