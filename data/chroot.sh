@@ -7,7 +7,7 @@ export DEBIAN_FRONTEND=noninteractive
 IMAGE_PROFILE="${IMAGE_PROFILE:-development}"
 POP_KEY_FINGERPRINT="63C46DF0140D738961429F4E204DD8AEC33A7AFF"
 POP_SOURCE="/etc/apt/sources.list.d/pop-os-release.sources"
-POP_SOURCE_DISABLED="${POP_SOURCE}.disabled-for-key-bootstrap"
+POP_SOURCE_DISABLED="/root/pop-os-release.sources.disabled-for-key-bootstrap"
 
 # The Pop repository cannot be authenticated until its archive key is present.
 # Temporarily hide that source while installing GnuPG from Ubuntu.
@@ -15,8 +15,17 @@ if [[ -f "${POP_SOURCE}" ]]; then
     mv "${POP_SOURCE}" "${POP_SOURCE_DISABLED}"
 fi
 
-apt-get update
-apt-get install --yes --no-install-recommends \
+# Stop immediately with useful resolver diagnostics instead of allowing APT
+# to continue with missing or stale indexes.
+if ! getent hosts ports.ubuntu.com >/dev/null 2>&1; then
+    echo "DNS resolution is unavailable inside the build container." >&2
+    echo "Contents of /etc/resolv.conf:" >&2
+    cat /etc/resolv.conf >&2 || true
+    exit 1
+fi
+
+apt-get -o Acquire::Retries=5 update
+apt-get -o Acquire::Retries=5 install --yes --no-install-recommends \
     ca-certificates \
     curl \
     dirmngr \
@@ -57,13 +66,13 @@ if [[ -f "${POP_SOURCE_DISABLED}" ]]; then
     mv "${POP_SOURCE_DISABLED}" "${POP_SOURCE}"
 fi
 
-apt-get update
-apt-get dist-upgrade --yes -o Dpkg::Options::="--force-confnew"
+apt-get -o Acquire::Retries=5 update
+apt-get -o Acquire::Retries=5 dist-upgrade --yes -o Dpkg::Options::="--force-confnew"
 
 # Keep the explicit Raspberry Pi kernel and firmware packages in this list even
 # though the Pop metapackage may already depend on some of them.  The image must
 # always contain Ubuntu's Pi-specific BCM2712 kernel, DTBs, and firmware.
-apt-get install --yes -o Dpkg::Options::="--force-confnew" \
+apt-get -o Acquire::Retries=5 install --yes -o Dpkg::Options::="--force-confnew" \
     pop-desktop-raspi \
     linux-image-raspi \
     linux-firmware-raspi \

@@ -22,7 +22,24 @@ BOOT_START_MIB="${BOOT_START_MIB:-1}"
 BOOT_END_MIB="${BOOT_END_MIB:-1025}"
 PROFILE="${PROFILE:-development}"
 DEV_CONFIG="${DEV_CONFIG:-}"
+NSPAWN_RESOLV_CONF="${NSPAWN_RESOLV_CONF:-}"
 LOOP_DEVICE=""
+
+# A debootstrap root may contain /etc/resolv.conf as a symlink.  The
+# systemd-nspawn "copy-host" mode deliberately leaves non-regular files such
+# as symlinks untouched, which can leave the container pointing at a resolver
+# path or local stub that does not work inside the build environment.
+#
+# Prefer systemd-resolved's uplink file because it contains the real upstream
+# DNS servers.  Fall back to replacing the container file with the host's
+# resolver configuration on systems that do not provide the uplink file.
+if [[ -z "${NSPAWN_RESOLV_CONF}" ]]; then
+    if [[ -s /run/systemd/resolve/resolv.conf ]]; then
+        NSPAWN_RESOLV_CONF="replace-uplink"
+    else
+        NSPAWN_RESOLV_CONF="replace-host"
+    fi
+fi
 
 cleanup() {
     local status=$?
@@ -114,12 +131,14 @@ if [[ "${PROFILE}" == development ]]; then
         "${MOUNT_DIR}/root/rpi-image-build.conf"
 fi
 
+echo "Using systemd-nspawn DNS mode: ${NSPAWN_RESOLV_CONF}"
+
 systemd-nspawn \
     --quiet \
     --register=no \
     --machine=pop-rpi5-build \
     --directory="${MOUNT_DIR}" \
-    --resolv-conf=copy-host \
+    --resolv-conf="${NSPAWN_RESOLV_CONF}" \
     --setenv="IMAGE_PROFILE=${PROFILE}" \
     /bin/bash /root/rpi-image-chroot.sh
 
