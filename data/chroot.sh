@@ -72,7 +72,18 @@ apt-get -o Acquire::Retries=5 dist-upgrade --yes -o Dpkg::Options::="--force-con
 # Keep the explicit Raspberry Pi kernel and firmware packages in this list even
 # though the Pop metapackage may already depend on some of them.  The image must
 # always contain Ubuntu's Pi-specific BCM2712 kernel, DTBs, and firmware.
-apt-get -o Acquire::Retries=5 install --yes -o Dpkg::Options::="--force-confnew" \
+# Pop!_OS may provide a coordinated systemd package set whose version numbers
+# are lower than the versions currently present in Ubuntu Noble updates.
+#
+# Permit those dependency-driven downgrades for this disposable target image,
+# but refuse the transaction if APT proposes removing any installed package.
+apt-get \
+    -o Acquire::Retries=5 \
+    install \
+    --yes \
+    --allow-downgrades \
+    --no-remove \
+    -o Dpkg::Options::="--force-confnew" \
     pop-desktop-raspi \
     linux-image-raspi \
     linux-firmware-raspi \
