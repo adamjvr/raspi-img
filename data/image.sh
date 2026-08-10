@@ -94,7 +94,15 @@ rsync \
     --xattrs \
     "${DEBOOTSTRAP_ROOT}/" "${MOUNT_DIR}/"
 
-rsync --archive "data/etc/" "${MOUNT_DIR}/etc/"
+# Repository files belong to the developer on the build host, but they
+# become operating-system files inside the target image. Never allow the
+# host checkout's UID, GID, or group-writable directory modes to leak into
+# the target filesystem.
+rsync \
+    --archive \
+    --chown=0:0 \
+    --chmod=D755,Fgo-w \
+    "data/etc/" "${MOUNT_DIR}/etc/"
 
 mkdir -p "${MOUNT_DIR}/boot/firmware"
 mount "${LOOP_DEVICE}p1" "${MOUNT_DIR}/boot/firmware"
@@ -111,12 +119,14 @@ rsync \
     "data/boot/firmware/" "${MOUNT_DIR}/boot/firmware/"
 
 if [[ -d rootfs-overlay ]]; then
+    # rootfs-overlay is stored in Git, so host-side ownership, ACLs, xattrs,
+    # and checkout directory modes are not authoritative target metadata.
+    # Explicitly install the overlay as root-owned system content.
     rsync \
         --archive \
-        --acls \
         --hard-links \
-        --numeric-ids \
-        --xattrs \
+        --chown=0:0 \
+        --chmod=D755,Fgo-w \
         "rootfs-overlay/" "${MOUNT_DIR}/"
 fi
 

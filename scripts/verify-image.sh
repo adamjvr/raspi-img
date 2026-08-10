@@ -23,9 +23,15 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 LOOP_DEVICE="$(sudo losetup --find --show --partscan "${IMAGE}")"
-sudo mount "${LOOP_DEVICE}p2" "${MOUNT_DIR}"
-sudo mkdir -p "${MOUNT_DIR}/boot/firmware"
-sudo mount "${LOOP_DEVICE}p1" "${MOUNT_DIR}/boot/firmware"
+# Verification must never alter the filesystem being inspected.
+sudo mount -o ro,noload "${LOOP_DEVICE}p2" "${MOUNT_DIR}"
+
+if [[ ! -d "${MOUNT_DIR}/boot/firmware" ]]; then
+    echo "Missing /boot/firmware mount point in root filesystem" >&2
+    exit 1
+fi
+
+sudo mount -o ro "${LOOP_DEVICE}p1" "${MOUNT_DIR}/boot/firmware"
 
 BOOT="${MOUNT_DIR}/boot/firmware"
 for file_name in config.txt cmdline.txt vmlinuz initrd.img bcm2712-rpi-5-b.dtb; do
@@ -54,6 +60,50 @@ if [[ -e "${MOUNT_DIR}/root/rpi-image-build.conf" ]]; then
     echo "Build credentials leaked into the image" >&2
     exit 1
 fi
+
+# System directory ownership is security-critical. Repository overlays must
+# never transfer the build user's UID/GID or checkout directory modes into
+# the finished operating-system image.
+check_root_owned() {
+    local target_path="$1"
+    local actual_owner
+
+    actual_owner="$(sudo stat -c '%u:%g' "${MOUNT_DIR}${target_path}")"
+
+    if [[ "${actual_owner}" != "0:0" ]]; then
+        echo             "System path is not root-owned: ${target_path} (${actual_owner})"             >&2
+        exit 1
+    fi
+}
+
+for target_path in \
+    / \
+    /etc \
+    /usr \
+    /var \
+    /boot \
+    /root \
+    /home
+do
+    check_root_owned "${target_path}"
+done
+
+check_mode() {
+    local target_path="$1"
+    local expected_mode="$2"
+    local actual_mode
+
+    actual_mode="$(sudo stat -c '%a' "${MOUNT_DIR}${target_path}")"
+
+    if [[ "${actual_mode}" != "${expected_mode}" ]]; then
+        echo             "Unexpected mode on ${target_path}: ${actual_mode}; expected ${expected_mode}"             >&2
+        exit 1
+    fi
+}
+
+check_mode / 755
+check_mode /etc 755
+check_mode /usr 755
 
 sudo dpkg-query \
     --admindir="${MOUNT_DIR}/var/lib/dpkg" \
